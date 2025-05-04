@@ -1,0 +1,1174 @@
+---
+title: "r code for the data analysis and figures"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+#install the packages before run the code
+library('rgdal')
+library('XML')
+#install.packages("dismo", repos="http://R-Forge.R-project.org")
+library('dismo')
+library(dplyr)
+library(Rmisc)
+library(grid) 
+library(ggplot2)
+library(tidyverse)
+library(reshape)
+library(data.table)
+library(data.table)
+library('rgdal')
+library(raster)
+library('XML')
+#install.packages("dismo", repos="http://R-Forge.R-project.org")#yes
+library('dismo')
+par(mfrow=c(1,1))
+#sp1 for example
+library(scales)#for using alpha()
+library(diptest)
+library(Rmisc)
+library(raster)
+library(metafor)
+```
+#1 Input the data
+```{r}
+mean.fill<-read.table(".../Data.txt",header=TRUE,sep=";")
+```
+
+#2.1 fig1a
+```{r}
+#1) get the unique sites for W, N, P and D, interaction 
+# warm site
+names(mean.fill)
+warm_site<-mean.fill %>%  drop_na(W_mean,LAT,LON) %>% dplyr::select(LAT,LON)%>%distinct(LAT,LON)%>%add_column(Treat="W")
+# dry site
+dry_site<-mean.fill %>%  drop_na(D_mean,LAT,LON) %>% dplyr::select(LAT,LON)%>%distinct(LAT,LON)%>%add_column(Treat="D")
+#wet site
+wet_site<-mean.fill %>%  drop_na(I_mean,LAT,LON) %>% dplyr::select(LAT,LON)%>%distinct(LAT,LON)%>%add_column(Treat="I")
+#N SITE
+n_site<-mean.fill %>%  drop_na(N_mean,LAT,LON) %>% dplyr::select(LAT,LON)%>% distinct(LAT,LON)%>%add_column(Treat="N")
+# warm and n add
+wn_site<-mean.fill %>%  drop_na(WN_mean,LAT,LON) %>% dplyr::select(LAT,LON)%>%distinct(LAT,LON)%>%add_column(Treat="WN")
+# warm and water add
+in_site<-mean.fill %>%  drop_na(IN_mean,LAT,LON) %>% dplyr::select(LAT,LON)%>%distinct(LAT,LON)%>%add_column(Treat="IN")
+#add together
+site_all<-Reduce(function(x,y) {merge(x,y,all=T)}, 
+               list(dry_site,wet_site,warm_site,n_site,wn_site,in_site))
+dplyr::count(site_all,Treat)
+site_all1<-site_all%>%subset(select=c(LON,LAT))%>%distinct()
+
+#2) add shrub global map, it will take long time to get the map
+library(raster)
+#download it from https://lcviewer.vito.be/2015
+s = raster(".../CLC2015_shrublands_Perc_1km.tif",agrument=T)#plot(s,legend=T)
+s.df<-as.data.frame(s,xy=T)
+s.df1<-s.df[-which(s.df$shrub.coverfraction==0),]
+names(s.df1)[1:3]<-c('lon','lat','per')
+library(ggplot2)
+bg<-ggplot()+
+  geom_tile(data=na.omit(s.df1),aes(x=lon,y=lat,fill=per))+
+  scale_fill_gradient2(low='white',mid='khaki',high='darkgreen')
+bg
+
+map2 <- 
+  bg+ 
+  geom_point( data=site_all,aes(x=LON, y=LAT,color = Treat, shape=Treat,size=Treat), size=2.5)+
+  scale_shape_manual(values=c(1,2,0,6,4,3),
+                     label=c('W (29)','P (29)',"N (31)",
+                             'D (34)',"WN (5)","PN (10)"))+
+  #scale_size_manual(values=c(3,4,3,4,5,100))+
+  scale_color_manual(values=c("red", 'blue',"magenta",
+                              "orange","red","blue2"),
+                     label=c('W (29)','P (29)',"N (31)",
+                             'D (34)',"WN (5)","PN (10)"))+
+  scale_size_manual(values=c(100,1,3.5,5,3,4))+
+  scale_x_continuous(name = "Longitude°",limits=c(-180,180),
+                          breaks=seq(-160,160,80)) +
+  #annotate("text", x = -180, y = 90, label = "(a)",size=6)+
+  scale_y_continuous(name="Latitude°",
+                     limits=c(-60,90),breaks=seq(-45,90,45))+
+  theme_bw()+
+  guides(color=guide_legend(override.aes = list(size=3)))+
+  theme(plot.background=element_blank(),
+        axis.ticks.length=unit(.2, "cm"),
+        panel.spacing.x=unit(2, 'lines'),
+        plot.title=element_text(lineheight=2,hjust=0.5),
+        panel.background=element_blank(),
+        panel.grid.minor=element_blank(),
+        panel.grid.major=element_line(colour = "gainsboro"),
+        panel.border=element_rect(fill=NULL,colour='black',
+                                  linetype=1,size=1),
+        # axis.line=element_line(colour='black',linetype=1),
+        axis.ticks=element_line(colour='black',linetype=1),
+        axis.title.y = element_text(colour='black',size=12,vjust=1),
+        axis.text.y  = element_text(colour='black',vjust=0.5, size=10),
+        axis.title.x = element_text(colour='black',size=12,vjust=0.2),
+        axis.text.x  = element_text(colour='black',angle=0, 
+                                    vjust=0.2, size=10),
+        legend.position = 'right',
+        legend.title=element_blank(),
+        legend.text = element_text(colour="black", size = 10),
+        legend.background = element_blank(),
+        strip.text =  element_text(colour='black',size=25,vjust=1),
+        plot.margin = unit(c(0,0,0.5,0),'cm'))
+map2
+ggsave(map2,filename = '.../fig1.tiff',width = 8,height =4,compression="lzw",dpi=200)
+```
+
+#2.2 Fig. 2
+##1 run metafor
+```{r}
+#1) under W
+names(mean.fill)
+sen.at<-mean.fill%>%subset(select=c(1,3:6,10:12,32))%>% drop_na()
+sen.gs<-mean.fill%>%subset(select=c(1,3:6,10:12,33))%>% drop_na()
+names(sen.at)[9]<-"net_T"
+names(sen.gs)[9]<-"net_T"
+sen.W<-rbind(sen.at,sen.gs)
+sen.W$metric<-as.factor(sen.W$metric)
+levels(sen.W$metric)
+#check the factor
+sen.W$metric<-as.factor(sen.W$metric)
+mean_S_W_O<-
+       ldply(levels(sen.W$metric),function(j){
+  # j=levels(sen.W$metric)[1]
+    data_metric<-sen.W[sen.W$metric==j,] 
+    data_metric$yi<-log(data_metric$W_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$W_sd*data_metric$W_sd/(data_metric$W_n*data_metric$W_mean*data_metric$W_mean)+               data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+   #multiple 100 for percentage change
+    data_metric$per_change<-(exp(data_metric$yi)-1)*100
+    #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+    model <- rma(yi=data_metric$per_change, vi=data_metric$vi,mods=~I(1/data_metric$vi), mdata = data_metric, control=list(stepadj=0.5, maxiter=1000))
+  # Obtain mean and standard deviation of the original predictor
+    p.data<-data.frame(metric= j,P=model$pval[1])
+    data.per<-data.frame(Sen=model[[1]][[1]], CI_L=model$ci.lb[1],CI_H=model$ci.ub[1] )
+    sig<-cbind(data.frame( metric= j,data.per$Sen,data.per$CI_L,data.per$CI_H),p.data)
+       })
+mean_S_W_O$Treat<-"W"
+
+#2) under D
+names(mean.fill)
+sen.d<-mean.fill%>%subset(select=c(1,3:9,34))%>% drop_na()
+sen.d$metric<-as.factor(sen.d$metric)
+levels(sen.d$metric)
+sen.d$D_net<-with(sen.d,-D_net)
+sen.d$metric<-as.factor(sen.d$metric)
+mean_S_D_O<-
+       ldply(levels(sen.d$metric),function(j){
+       
+        # j=levels(sen.d$metric)[1]
+    data_metric<-sen.d[sen.d$metric==j,] 
+   data_metric$yi<-log(data_metric$D_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$D_sd*data_metric$D_sd/(data_metric$D_n*data_metric$D_mean*data_metric$D_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+    
+   #multiple 100 for percentage change
+  data_metric$per_change<-(exp(data_metric$yi)-1)*100
+  # Standardize net change to a specific value (e.g., 1 unit)
+  #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+    model <- rma(yi=data_metric$per_change, vi=data_metric$vi,mods=~I(1/data_metric$vi),mdata = data_metric, control=list(stepadj=0.5, maxiter=1000))
+  # Obtain mean and standard deviation of the original predictor
+    p.data<-data.frame(metric= j,P=model$pval[1])
+    data.per<-data.frame(Sen=model[[1]][[1]], CI_L=model$ci.lb[1],CI_H=model$ci.ub[1] )
+    sig<-cbind(data.frame( metric= j,data.per$Sen,data.per$CI_L,data.per$CI_H),p.data)
+       })
+mean_S_D_O$Treat<-"D"
+
+
+#3) under P
+names(mean.fill)
+sen.p<-mean.fill%>%subset(select=c(1,3:6,13,14,15,35))%>% drop_na()
+#check the factor
+str(sen.p)
+sen.p$I_mean<-as.numeric(as.character(sen.p$I_mean))
+
+mean_S_P_O<-
+       ldply(levels(sen.p$metric),function(j){
+       
+         #j=levels(sen.p$metric)[1]
+    data_metric<-sen.p[sen.p$metric==j,] 
+   data_metric$yi<-log(data_metric$I_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$I_sd*data_metric$I_sd/(data_metric$I_n*data_metric$I_mean*data_metric$I_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+    
+   #multiple 100 for percentage change
+  data_metric$per_change<-(exp(data_metric$yi)-1)*100
+  # Standardize net change to a specific value (e.g., 1 unit)
+  #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+    model <- rma(yi=data_metric$per_change, vi=data_metric$vi,mods=~I(1/data_metric$vi), mdata = data_metric, control=list(stepadj=0.5, maxiter=1000))
+  # Obtain mean and standard deviation of the original predictor
+    p.data<-data.frame(metric= j,P=model$pval[1])
+    data.per<-data.frame(Sen=model[[1]][[1]], CI_L=model$ci.lb[1],CI_H=model$ci.ub[1] )
+    sig<-cbind(data.frame( metric= j,data.per$Sen,data.per$CI_L,data.per$CI_H),p.data)
+       })
+mean_S_P_O$Treat<-"P"
+
+
+
+#3 under N
+names(mean.fill)
+sen.n<-mean.fill%>%subset(select=c(1,3:6,16:18,36))%>% drop_na()
+sen.n$metric<-as.factor(sen.n$metric)
+levels(sen.n$metric)
+#check the metric, 
+sen.n$metric<-as.factor(sen.n$metric)
+levels(sen.n$metric)
+mean_S_N_O<-
+       ldply(levels(sen.n$metric),function(j){
+       
+         #j=levels(sen.d$metric)[6]
+    data_metric<-sen.n[sen.n$metric==j,] 
+   data_metric$yi<-log(data_metric$N_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$N_sd*data_metric$N_sd/(data_metric$N_n*data_metric$N_mean*data_metric$N_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+    
+   #multiple 100 for percentage change
+  data_metric$per_change<-(exp(data_metric$yi)-1)*100
+  # Standardize net change to a specific value (e.g., 1 unit)
+  #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+    model <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods=~I(1/data_metric$vi),mdata = data_metric, control=list(stepadj=0.5, maxiter=1000))
+  # Obtain mean and standard deviation of the original predictor
+    p.data<-data.frame(metric= j,P=model$pval[1])
+    data.per<-data.frame(Sen=model[[1]][[1]], CI_L=model$ci.lb[1],CI_H=model$ci.ub[1] )
+    sig<-cbind(data.frame( metric= j,data.per$Sen,data.per$CI_L,data.per$CI_H),p.data)
+       })
+mean_S_N_O$Treat<-"N"
+```
+##2 plot 
+```{r}
+#combine the data for sensitivity
+sen.mean<-bind_rows(mean_S_W_O, mean_S_D_O, mean_S_P_O,mean_S_N_O)
+#get the number of each metric and treatment
+W.num<- sen.W %>%group_by(metric) %>%dplyr::summarise(n=n())
+W.num$Treat<-"W"
+W.num$Position<-35
+D.num<- sen.d %>%group_by(metric) %>%dplyr::summarise(n=n())
+D.num$Treat<-"D"
+D.num$Position<-40
+P.num<- sen.p %>%group_by(metric) %>%dplyr::summarise(n=n())
+P.num$Treat<-"P"
+P.num$Position<-400
+N.num<- sen.n %>%group_by(metric) %>%dplyr::summarise(n=n())
+N.num$Treat<-"N"
+N.num$Position<-60
+treat.num<-bind_rows(W.num, D.num, P.num,N.num)
+
+sen.mean$metric<-factor(sen.mean$metric,c('Ratio_S','H','SP','DEN','COV','ANPP','AGB'))
+treat.num$metric<-factor(treat.num$metric,c('Ratio_S','H','SP','DEN','COV','ANPP','AGB'))
+sen.mean.num<-merge(sen.mean,treat.num,group_by=c("metric","Treat"),all.x=T)
+names(sen.mean.num)
+names(sen.mean.num)[3:5]<-c("Sen","ci.low","ci.high")
+
+
+fig1b<-sen.mean.num%>%subset(Treat=='W')%>%
+  ggplot(aes(x=Sen,y=metric))+
+  facet_grid(scales = 'free_x',switch = 'x')+
+  geom_vline(aes(xintercept=0),linetype=2,color='grey')+
+  geom_errorbarh(aes(xmin=ci.low,xmax=ci.high),na.rm = T,height=0.35,color="red")+
+  geom_point(na.rm = T,size=3.0,shape=21,fill='white',color="red",stroke=0.6)+
+  scale_x_continuous(name="AGB sensitivity under W",limits=c(-20,35),
+                     breaks=seq(-15,30,15))+
+  geom_text(aes(x=Position,y=metric,label=n),color="red",size=3.5)+
+  theme_bw()+
+  theme(axis.title=element_blank(),
+      axis.ticks.length=unit(.2, "cm"),
+      strip.placement = 'outside',
+      strip.background = element_blank(),
+      panel.border = element_rect(color='black',fill = NA),
+      strip.text = element_text(color = 'black'),
+      axis.text.y = element_blank(),
+      axis.text.x = element_text(colour='black',size=12,vjust=0.2),
+      legend.position = 'none')
+fig1b
+ggsave(fig1b,filename = '.../fig.2W.tiff',width = 2.8,height =4,compression="lzw",dpi=200) 
+
+fig1c<-sen.mean.num%>%subset(Treat=='P')%>%
+  ggplot(aes(x=Sen,y=metric))+
+  facet_grid(scales = 'free_x',switch = 'x')+
+  geom_vline(aes(xintercept=0),linetype=2,color='grey')+
+  geom_errorbarh(aes(xmin=ci.low,xmax=ci.high),na.rm = T,height=0.35,color="blue")+
+  geom_point(na.rm = T,size=3.0,shape=21,fill='white',color="blue",stroke=0.6)+
+  scale_x_continuous(name="AGB sensitivity under W",limits=c(-50,400),
+                     breaks=seq(0,400,100))+
+  geom_text(aes(x=Position,y=metric,label=n),color="blue",size=3.5)+
+  theme_bw()+
+  theme(axis.title=element_blank(),
+      axis.ticks.length=unit(.2, "cm"),
+      strip.placement = 'outside',
+      strip.background = element_blank(),
+      panel.border = element_rect(color='black',fill = NA),
+      strip.text = element_text(color = 'black'),
+      axis.text.y = element_blank(),
+      axis.text.x = element_text(colour='black',size=12,vjust=0.2),
+      legend.position = 'none')
+fig1c
+ggsave(fig1c,filename = '.../fig.2P.tiff',width = 2.8,height =4,compression="lzw",dpi=200) 
+
+fig1n<-sen.mean.num%>%subset(Treat=='N')%>%
+  ggplot(aes(x=Sen,y=metric))+
+  facet_grid(scales = 'free_x',switch = 'x')+
+  geom_vline(aes(xintercept=0),linetype=2,color='grey')+
+  geom_errorbarh(aes(xmin=ci.low,xmax=ci.high),na.rm = T,height=0.35,color="magenta2")+
+  geom_point(na.rm = T,size=3.0,shape=21,fill='white',color="magenta2",stroke=0.6)+
+  scale_x_continuous(name="AGB sensitivity under W",limits=c(-35,60),
+                     breaks=seq(-30,60,30))+
+  geom_text(aes(x=Position,y=metric,label=n),color="magenta2",size=3.5)+
+  theme_bw()+
+  theme(axis.title=element_blank(),
+      axis.ticks.length=unit(.2, "cm"),
+      strip.placement = 'outside',
+      strip.background = element_blank(),
+      panel.border = element_rect(color='black',fill = NA),
+      strip.text = element_text(color = 'black'),
+      axis.text.y = element_blank(),
+      axis.text.x = element_text(colour='black',size=12,vjust=0.2),
+      legend.position = 'none')
+fig1n
+ggsave(fig1n,filename = '.../fig.2N.tiff',width = 2.8,height =4,compression="lzw",dpi=200) 
+
+fig1d<-sen.mean.num%>%subset(Treat=='D')%>%
+  ggplot(aes(x=Sen,y=metric))+
+  facet_grid(scales = 'free_x',switch = 'x')+
+  geom_vline(aes(xintercept=0),linetype=2,color='grey')+
+  geom_errorbarh(aes(xmin=ci.low,xmax=ci.high),na.rm = T,height=0.35,color="orange")+
+  geom_point(na.rm = T,size=3.0,shape=21,fill='white',color="orange",stroke=0.6)+
+  scale_x_continuous(name="AGB sensitivity under W",limits=c(-50,40),
+                     breaks=seq(-40,40,20))+
+  geom_text(aes(x=Position,y=metric,label=n),color="orange",size=3.5)+
+  theme_bw()+
+  theme(axis.title=element_blank(),
+      axis.ticks.length=unit(.2, "cm"),
+      strip.placement = 'outside',
+      strip.background = element_blank(),
+      panel.border = element_rect(color='black',fill = NA),
+      strip.text = element_text(color = 'black'),
+      axis.text.y = element_blank(),
+      axis.text.x = element_text(colour='black',size=12,vjust=0.2),
+      legend.position = 'none')
+fig1d
+ggsave(fig1d,filename = '.../fig.2D.tiff',width = 2.8,height =4,compression="lzw",dpi=200) 
+```
+
+#2.3 fig3 
+
+##1 long vs short
+```{r}
+#1) W
+library(metafor)
+names(mean.fill)
+sen.at<-mean.fill%>%subset(select=c(1,3:6,10:12,32,28))%>% drop_na()
+sen.gs<-mean.fill%>%subset(select=c(1,3:6,10:12,33,28))%>% drop_na()
+names(sen.at)[9]<-"net_T"
+names(sen.gs)[9]<-"net_T"
+sen.W<-rbind(sen.at,sen.gs)
+sen.W$metric<-as.factor(sen.W$metric)
+levels(sen.W$metric)
+#check the factor
+sen.W$term<-as.factor(sen.W$term)
+levels(sen.W$term)
+mean_S_W_O<-
+       ldply(levels(sen.W$metric),function(j){
+   #j=levels(sen.W$metric)[1]
+    data_metric<-sen.W[sen.W$metric==j,] 
+    data_metric$yi<-log(data_metric$W_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$W_sd*data_metric$W_sd/(data_metric$W_n*data_metric$W_mean*data_metric$W_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+   #multiple 100 for percentage change
+    data_metric$per_change<-(exp(data_metric$yi)-1)*100
+    #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+    model <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ term,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+  # Obtain mean and standard deviation of the original predictor
+    p.data<-data.frame(metric= j,term=1,value=model[[1]][1], P=model$pval[1],
+                       CI_L=model$ci.lb[1],CI_H=model$ci.ub[1])
+    data.per<-data.frame(metric= j,term=2,value=model[[1]][2],P=model$pval[2],
+                         CI_L=model$ci.lb[2],CI_H=model$ci.ub[2] )
+    sig<-rbind(data.per, p.data)
+       })
+mean_S_W_O$Treat<-"W"
+
+
+#2) D
+names(mean.fill)
+sen.d<-mean.fill%>%subset(select=c(1,3:9,34,28))%>% drop_na()
+sen.d$metric<-as.factor(sen.d$metric)
+levels(sen.d$metric)
+sen.d$D_net<-with(sen.d,-D_net)
+sen.d$metric<-as.factor(sen.d$metric)
+#check the factor
+sen.d$term<-as.factor(sen.d$term)
+mean_S_D_O<-
+       ldply(levels(sen.d$metric),function(j){
+       
+        # j=levels(sen.d$metric)[1]
+    data_metric<-sen.d[sen.d$metric==j,] 
+   data_metric$yi<-log(data_metric$D_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$D_sd*data_metric$D_sd/(data_metric$D_n*data_metric$D_mean*data_metric$D_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+   #multiple 100 for percentage change
+  data_metric$per_change<-(exp(data_metric$yi)-1)*100
+  # Standardize net change to a specific value (e.g., 1 unit)
+  #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+    model <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ term,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+  # Obtain mean and standard deviation of the original predictor
+    p.data<-data.frame(metric= j,term=1,value=model[[1]][1], P=model$pval[1],
+                       CI_L=model$ci.lb[1],CI_H=model$ci.ub[1])
+    data.per<-data.frame(metric= j,term=2,value=model[[1]][2],P=model$pval[2],
+                         CI_L=model$ci.lb[2],CI_H=model$ci.ub[2] )
+    sig<-rbind(data.per, p.data)
+       })
+mean_S_D_O$Treat<-"D"
+
+
+#3) P
+names(mean.fill)
+sen.p<-mean.fill%>%subset(select=c(1,3:6,13:15,35,28))%>% drop_na()
+sen.p$metric<-as.factor(sen.p$metric)
+levels(sen.p$metric)
+#check the factor
+sen.p$metric<-as.factor(sen.p$metric)
+
+#check the factor
+str(sen.p)
+sen.p$I_mean<-as.numeric(as.character(sen.p$I_mean))
+
+mean_S_P_O<-
+       ldply(levels(sen.p$metric),function(j){
+       
+         #j=levels(sen.d$metric)[1]
+    data_metric<-sen.p[sen.p$metric==j,] 
+   data_metric$yi<-log(data_metric$I_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$I_sd*data_metric$I_sd/(data_metric$I_n*data_metric$I_mean*data_metric$I_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+    
+   #multiple 100 for percentage change
+  data_metric$per_change<-(exp(data_metric$yi)-1)*100
+  # Standardize net change to a specific value (e.g., 1 unit)
+  #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+    model <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ term,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+  # Obtain mean and standard deviation of the original predictor
+    p.data<-data.frame(metric= j,term=1,value=model[[1]][1], P=model$pval[1],
+                       CI_L=model$ci.lb[1],CI_H=model$ci.ub[1])
+    data.per<-data.frame(metric= j,term=2,value=model[[1]][2],P=model$pval[2],
+                         CI_L=model$ci.lb[2],CI_H=model$ci.ub[2] )
+    sig<-rbind(data.per, p.data)
+       })
+mean_S_P_O$Treat<-"P"
+
+
+#4) N
+names(mean.fill)
+sen.n<-mean.fill%>%subset(select=c(1,3:6,16:18,36,28))%>% drop_na()
+sen.n$metric<-as.factor(sen.n$metric)
+levels(sen.n$metric)
+#check the metric, 
+sen.n$metric<-as.factor(sen.n$metric)
+levels(sen.n$metric)
+#check the factor
+sen.W$term<-as.factor(sen.W$term)
+
+mean_S_N_O<-
+       ldply(levels(sen.n$metric),function(j){
+       
+         #j=levels(sen.d$metric)[1]
+    data_metric<-sen.n[sen.n$metric==j,] 
+   data_metric$yi<-log(data_metric$N_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$N_sd*data_metric$N_sd/(data_metric$N_n*data_metric$N_mean*data_metric$N_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+    
+   #multiple 100 for percentage change
+  data_metric$per_change<-(exp(data_metric$yi)-1)*100
+  # Standardize net change to a specific value (e.g., 1 unit)
+  #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+    model <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ term,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+  # Obtain mean and standard deviation of the original predictor
+    p.data<-data.frame(metric= j,term=1,value=model[[1]][1], P=model$pval[1],
+                       CI_L=model$ci.lb[1],CI_H=model$ci.ub[1])
+    data.per<-data.frame(metric= j,term=2,value=model[[1]][2],P=model$pval[2],
+                         CI_L=model$ci.lb[2],CI_H=model$ci.ub[2] )
+    sig<-rbind(data.per, p.data)
+       })
+mean_S_N_O$Treat<-"N"
+```
+
+
+##2 plot
+```{r}
+#combine the data for sensitivity
+sen.mean<-bind_rows(mean_S_W_O, mean_S_D_O, mean_S_P_O,mean_S_N_O)
+#get the number of each metric and treatment
+W.num<- sen.W %>%group_by(metric,term) %>%dplyr::summarise(n=n())
+W.num$Treat<-"W"
+W.num$Position<-40
+
+D.num<- sen.d %>%group_by(metric,term) %>%dplyr::summarise(n=n())
+D.num$Treat<-"D"
+D.num$Position<-80
+D.num$term<-as.factor(D.num$term)
+
+
+P.num<- sen.p %>%group_by(metric,term) %>%dplyr::summarise(n=n())
+P.num[11:14,]<-NA
+P.num[11:14,1]<-c("ANPP","COV","H","Ratio_S")
+P.num[11:14,2]<-c(2,2,2,2)
+P.num$Treat<-"P"
+P.num$Position<-700
+P.num$term<-as.factor(P.num$term)
+
+N.num<- sen.n %>%group_by(metric,term) %>%dplyr::summarise(n=n())
+N.num[14,]<-NA
+N.num[14,1]<-c("ANPP")
+N.num[14,2]<-2
+N.num$Treat<-"N"
+N.num$Position<-120
+N.num$term<-as.factor(N.num$term)
+
+treat.num<-dplyr::bind_rows(W.num, D.num, P.num, N.num)
+
+sen.mean$metric<-factor(sen.mean$metric,c('Ratio_S','H','SP','DEN','COV','ANPP','AGB'))
+treat.num$metric<-factor(treat.num$metric,c('Ratio_S','H','SP','DEN','COV','ANPP','AGB'))
+sen.mean.num<-merge(sen.mean,treat.num,group_by=c("metric","Treat","term"),all.x=T)
+names(sen.mean.num)
+names(sen.mean.num)[4:7]<-c("Sen","P","ci.low","ci.high")
+sen.mean$term<-factor(sen.mean$term,levels=c("1","2"))
+sen.mean.num$term<-as.factor(sen.mean.num$term)
+sen.mean.num$term <- factor(sen.mean.num$ter, levels=c('2', '1'))
+
+#1)warming
+fig.a<-
+  sen.mean.num%>%subset(Treat=='W')%>%
+  mutate(term=factor(term,levels=c('2','1'),labels=c('L','S')))%>%
+  ggplot(aes(x=Sen,y=metric))+
+  geom_vline(aes(xintercept=0),linetype=2,color='grey')+
+  geom_errorbarh(aes(group=term,xmin=ci.low,xmax=ci.high),color="red",height=0.5,
+                  position=position_dodge(0.6),size=0.6,na.rm = T)+
+  geom_point(aes(size=term),shape=21,color="red",stroke=0.6,fill="white",
+              position=position_dodge(0.6))+
+  scale_size_manual(values = c(4,2.5))+
+  scale_x_continuous(name="W",limits=c(-42,40),breaks=seq(-40,40,20))+
+  geom_text(aes(x=Position,group=term,label=n),color="red",size=3.5,position=position_dodge(0.6))+
+  theme_bw()+
+  theme(axis.title=element_blank(),
+      axis.ticks.length=unit(.2, "cm"),
+      strip.placement = 'outside',
+      strip.background = element_blank(),
+      panel.border = element_rect(color='black',fill = NA,linewidth =1),
+      strip.text = element_text(color = 'black'),
+      axis.text.y = element_blank(),
+      axis.text.x = element_text(colour='black',size=12,vjust=0.2),
+      legend.position = 'none',
+      plot.margin = margin(0,1,0,0, "cm"))
+fig.a
+ggsave(fig.a,filename = '.../fig.3a.tiff',width = 2.8,height =4,compression="lzw",dpi=200)
+
+##2) increased P
+fig.b<-
+  sen.mean.num%>%subset(Treat=='P')%>%
+  mutate(term=factor(term,levels=c('2','1'),labels=c('L','S')))%>%
+  ggplot(aes(x=Sen,y=metric))+
+  geom_vline(aes(xintercept=0),linetype=2,color='grey')+
+  geom_errorbarh(aes(group=term,xmin=ci.low,xmax=ci.high),color="blue",height=0.5,
+                  position=position_dodge(0.6),size=0.6,na.rm = T)+
+  geom_point(aes(size=term),shape=21,color="blue",stroke=0.6,fill="white",
+              position=position_dodge(0.6))+
+  scale_size_manual(values = c(4,2.5))+
+  scale_x_continuous(name="W",limits=c(-400,700),breaks=seq(-300,600,300))+
+  geom_text(aes(x=Position,group=term,label=n),color="blue",size=3.5,position=position_dodge(0.6))+
+  theme_bw()+
+  theme(axis.title=element_blank(),
+      axis.ticks.length=unit(.2, "cm"),
+      strip.placement = 'outside',
+      strip.background = element_blank(),
+      panel.border = element_rect(color='black',fill = NA,linewidth =1),
+      strip.text = element_text(color = 'black'),
+      axis.text.y = element_blank(),
+      axis.text.x = element_text(colour='black',size=12,vjust=0.2),
+      legend.position = 'none',
+      plot.margin = margin(0,1,0,0, "cm"))
+fig.b
+
+ggsave(fig.b,filename = '.../fig.3b.tiff',width = 2.8,height =4,compression="lzw",dpi=200)
+
+##Nitrogen addition
+
+fig.c<-
+  sen.mean.num%>%subset(Treat=='N')%>%
+  mutate(term=factor(term,levels=c('2','1'),labels=c('L','S')))%>%
+  ggplot(aes(x=Sen,y=metric))+
+  geom_vline(aes(xintercept=0),linetype=2,color='grey')+
+  geom_errorbarh(aes(group=term,xmin=ci.low,xmax=ci.high),color="magenta2",height=0.5,
+                  position=position_dodge(0.6),size=0.6,na.rm = T)+
+  geom_point(aes(size=term),shape=21,color="magenta2",stroke=0.6,fill="white",
+              position=position_dodge(0.6))+
+  scale_size_manual(values = c(4,2.5))+
+  scale_x_continuous(name="W",limits=c(-80,120),breaks=seq(-60,120,60))+
+  geom_text(aes(x=Position,group=term,label=n),color="magenta2",size=3.5,position=position_dodge(0.6))+
+  theme_bw()+
+  theme(axis.title=element_blank(),
+      axis.ticks.length=unit(.2, "cm"),
+      strip.placement = 'outside',
+      strip.background = element_blank(),
+      panel.border = element_rect(color='black',fill = NA,linewidth =1),
+      strip.text = element_text(color = 'black'),
+      axis.text.y = element_blank(),
+      axis.text.x = element_text(colour='black',size=12,vjust=0.2),
+      legend.position = 'none',
+      plot.margin = margin(0,1,0,0, "cm"))
+fig.c
+
+ggsave(fig.c,filename = '.../fig.3c.tiff',width = 2.8,height =4,compression="lzw",dpi=200)
+
+##4) drought
+
+fig.d<-
+  sen.mean.num%>%subset(Treat=='D')%>%
+  mutate(term=factor(term,levels=c('2','1'),labels=c('L','S')))%>%
+  ggplot(aes(x=Sen,y=metric))+
+  geom_vline(aes(xintercept=0),linetype=2,color='grey')+
+  geom_errorbarh(aes(group=term,xmin=ci.low,xmax=ci.high),color="orange",height=0.5,
+                  position=position_dodge(0.6),size=0.6,na.rm = T)+
+  geom_point(aes(size=term),shape=21,color="orange",stroke=0.6,fill="white",
+              position=position_dodge(0.6))+
+  scale_size_manual(values = c(4,2.5))+
+  scale_x_continuous(name="W",limits=c(-50,80),breaks=seq(-40,80,40))+
+  geom_text(aes(x=Position,group=term,label=n),color="orange",size=3.5,position=position_dodge(0.6))+
+  theme_bw()+
+  theme(axis.title=element_blank(),
+      axis.ticks.length=unit(.2, "cm"),
+      strip.placement = 'outside',
+      strip.background = element_blank(),
+      panel.border = element_rect(color='black',fill = NA,linewidth =1),
+      strip.text = element_text(color = 'black'),
+      axis.text.y = element_blank(),
+      axis.text.x = element_text(colour='black',size=12,vjust=0.2),
+      legend.position = 'none',
+      plot.margin = margin(0,1,0,0, "cm"))
+fig.d
+
+ggsave(fig.d,filename = '.../fig.3d.tiff',width = 2.8,height =4,compression="lzw",dpi=200)
+```
+
+
+
+#2.4 fig4
+
+##1) add net changes
+```{r}
+##W
+library(metafor)
+names(mean.fill)
+sen.at<-mean.fill%>%subset(select=c(1,3:6,10:12,32,41:44))%>% drop_na()
+sen.gs<-mean.fill%>%subset(select=c(1,3:6,10:12,33,41:44))%>% drop_na()
+names(sen.at)[9]<-"net_T"
+names(sen.gs)[9]<-"net_T"
+sen.W<-rbind(sen.at,sen.gs)
+sen.W$metric<-as.factor(sen.W$metric)
+levels(sen.W$metric)
+
+##D
+
+names(mean.fill)
+sen.d<-mean.fill%>%subset(select=c(1,3:9,34,41:44))%>% drop_na()
+sen.d$metric<-as.factor(sen.d$metric)
+levels(sen.d$metric)
+sen.d$D_net<-with(sen.d,-D_net)
+sen.d$metric<-as.factor(sen.d$metric)
+
+##P
+names(mean.fill)
+sen.p<-mean.fill%>%subset(select=c(1,3:6,13:15,35,41:44))%>% drop_na()
+sen.p$metric<-as.factor(sen.p$metric)
+#check the factor
+str(sen.p)
+sen.p$I_mean<-as.numeric(as.character(sen.p$I_mean))
+
+##N
+names(mean.fill)
+sen.n<-mean.fill%>%subset(select=c(1,3:6,16:18,36,41:44))%>% drop_na()
+sen.n$metric<-as.factor(sen.n$metric)
+levels(sen.n$metric)
+sen.n$metric<-as.factor(sen.n$metric)
+```
+
+
+##W
+```{r}
+#select the best climte drivers
+AIC_COM<-
+       ldply(levels(sen.W$metric),function(j){
+   #j=levels(sen.W$metric)[1]
+    data_metric<-sen.W[sen.W$metric==j,] 
+    data_metric$yi<-log(data_metric$W_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$W_sd*data_metric$W_sd/(data_metric$W_n*data_metric$W_mean*data_metric$W_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+   #multiple 100 for percentage change
+    data_metric$per_change<-(exp(data_metric$yi)-1)*100/(data_metric$net_T)
+    #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+    model1 <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ AI,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+    model2 <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ MAT,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+    model3 <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ MAP,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+  # Obtain mean and standard deviation of the original predictor
+    p.data<-data.frame(metric= j,AI=AIC(model1),MAT=AIC(model2),MAP=AIC(model3),P_AI=model1$pval[2],P_MAT=model2$pval[2],P_MAP=model3$pval[2])
+       })
+#MAT is best for Cover and H
+
+
+#1for cover
+data_metric<-sen.W[sen.W$metric=="COV",]
+data_metric$yi<-log(data_metric$W_mean/data_metric$C_mean)
+data_metric$vi<-data_metric$W_sd*data_metric$W_sd/(data_metric$W_n*data_metric$W_mean*data_metric$W_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+   #multiple 100 for percentage change
+data_metric$per_change<-(exp(data_metric$yi)-1)*100/(data_metric$net_T)
+    #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+mol_re <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ MAT,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+
+regplot(mol_re, mod="MAT",  xlab="Mean annual temperature(°C)", ylab=expression("W sen of COV (% +1°C)"),
+        xlim=c(-20,21), predlim=c(-20,21),shade="white",bg="red", legend=F)
+#add the weight values
+data_metric$weight<- weights(mol_re)
+#add the log regression
+lm_re<-lm(data_metric$per_change~data_metric$MAT)
+summary(lm_re)
+#add the confidence
+data_metric$pred_value<-predict(lm_re, newdata = data_metric, interval = "confidence")
+#run the plot
+p_den<-
+  ggplot(data_metric, aes(x = MAT, y = per_change)) +
+  geom_point(aes(size=weight),fill = "red",color="black",shape=21) + # Scatterplot
+  stat_smooth(method = "lm", formula = y ~ x, color = "black",se=F) + # Log regression line
+  geom_line(aes(y = pred_value[,'lwr']), linetype = "dashed", color = "black") +  # Lower boundary
+  geom_line(aes(y = pred_value[,'upr']), linetype = "dashed", color = "black") +  # Upper boundary
+  scale_x_continuous(limits=c(-20,21),breaks=seq(-20,20,10)) +
+  scale_y_continuous(limits=c(-75,40),breaks=seq(-60,20,20))+
+  theme_linedraw()+
+  theme(
+    panel.background = element_rect(color="black",fill="white"), 
+    panel.grid = element_blank(),
+    axis.text.y = element_text(colour = "black",  size = 14),
+    axis.text.x = element_text(colour = "black",  size = 14),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.key=element_blank(),
+    legend.text = element_text(colour="black", size = 8),
+    legend.title = element_text(size=10),
+    legend.key.size = unit(0.5, 'cm'),
+    legend.background = element_blank(),
+    text = element_text(size = 8),
+    legend.position= "none",
+    axis.ticks.length.y = unit(.3, "cm"),
+    axis.ticks.length.x = unit(.3, "cm") )
+p_den
+ggsave(plot=p_den,filename = '.../fig4.a.tiff', ,compression='lzw',  width = 8,height = 8,dpi=400,units = "cm")
+
+
+```
+
+
+##N
+```{r}
+N_AIC_COM<-
+       ldply(levels(sen.n$metric),function(j){
+   #j=levels(sen.n$metric)[1]
+    data_metric<-sen.n[sen.n$metric==j,] 
+    data_metric$yi<-log(data_metric$N_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$N_sd*data_metric$N_sd/(data_metric$N_n*data_metric$N_mean*data_metric$N_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+   #multiple 100 for percentage change
+    data_metric$per_change<-(exp(data_metric$yi)-1)*100/(data_metric$N_net)
+    #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+    model1 <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ AI,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+    model2 <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ MAT,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+    model3 <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ MAP,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+  # Obtain mean and standard deviation of the original predictor
+    p.data<-data.frame(metric= j,AI=AIC(model1),MAT=AIC(model2),MAP=AIC(model3),P_AI=model1$pval[2],P_MAT=model2$pval[2],P_MAP=model3$pval[2])
+       })
+#MAT is best for Cover and H
+
+#1for cover
+data_metric<-sen.n[sen.n$metric=="COV",]
+data_metric$yi<-log(data_metric$N_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$N_sd*data_metric$N_sd/(data_metric$N_n*data_metric$N_mean*data_metric$N_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+   #multiple 100 for percentage change
+    data_metric$per_change<-(exp(data_metric$yi)-1)*100/(data_metric$N_net)
+    #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+mol_re <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ AI,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+regplot(mol_re)
+regplot(mol_re, mod="AI",  xlab="Aridity index", ylab="P sen of COV (% +1g N m^-2 yr^-1",
+        xlim=c(0,1.8), predlim=c(0,1.8),shade="white",bg="magenta2", legend=F)
+#add the weight values
+data_metric$weight<- weights(mol_re)
+#add the log regression
+lm_re<-lm(data_metric$per_change~data_metric$AI)
+summary(lm_re)
+#add the confidence
+data_metric$pred_value<-predict(lm_re, newdata = data_metric, interval = "confidence")
+#run the plot
+p_den<-
+  ggplot(data_metric, aes(x = AI, y = per_change)) +
+  geom_point(aes(size=weight),fill = "magenta2",color="black",shape=21) + # Scatterplot
+  stat_smooth(method = "lm", formula = y ~ x, color = "black",se=F) + # Log regression line
+  geom_line(aes(y = pred_value[,'lwr']), linetype = "dashed", color = "black") +  # Lower boundary
+  geom_line(aes(y = pred_value[,'upr']), linetype = "dashed", color = "black") +  # Upper boundary
+  scale_x_continuous(limits=c(0,1.8),breaks=seq(0,1.8,0.4)) +
+  scale_y_continuous(limits=c(-60,25),breaks=seq(-60,20,20))+
+  theme_linedraw()+
+  theme(
+    panel.background = element_rect(color="black",fill="white"), 
+    panel.grid = element_blank(),
+    axis.text.y = element_text(colour = "black",  size = 14),
+    axis.text.x = element_text(colour = "black",  size = 14),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.key=element_blank(),
+    legend.text = element_text(colour="black", size = 8),
+    legend.title = element_text(size=10),
+    legend.key.size = unit(0.5, 'cm'),
+    legend.background = element_blank(),
+    text = element_text(size = 8),
+    legend.position= "none",
+    axis.ticks.length.y = unit(.3, "cm"),
+    axis.ticks.length.x = unit(.3, "cm") )
+p_den
+ggsave(plot=p_den,filename = '.../fig3.b.tiff', ,compression='lzw',  width = 8,height = 8,dpi=400,units = "cm")
+```
+
+##P
+```{r}
+AIC_COM<-
+       ldply(levels(sen.p$metric),function(j){
+   #j=levels(sen.p$metric)[1]
+    data_metric<-sen.p[sen.p$metric==j,] 
+    data_metric$yi<-log(data_metric$I_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$I_sd*data_metric$I_sd/(data_metric$I_n*data_metric$I_mean*data_metric$I_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+   #multiple 100 for percentage change
+    data_metric$per_change<-10*(exp(data_metric$yi)-1)*100/(data_metric$I_net)
+    #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+    model1 <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ AI,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+    model2 <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ MAT,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+    model3 <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ MAP,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+  # Obtain mean and standard deviation of the original predictor
+    p.data<-data.frame(metric= j,AI=AIC(model1),MAT=AIC(model2),MAP=AIC(model3),P_AI=model1$pval[2],P_MAT=model2$pval[2],P_MAP=model3$pval[2])
+       })
+#MAT is best for Cover and H
+
+
+#1for cover
+data_metric<-sen.p[sen.p$metric=="COV",]
+data_metric$yi<-log(data_metric$I_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$I_sd*data_metric$I_sd/(data_metric$I_n*data_metric$I_mean*data_metric$I_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+   #multiple 100 for percentage change
+    data_metric$per_change<-10*(exp(data_metric$yi)-1)*100/(data_metric$I_net)
+    #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+mol_re <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ AI,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+regplot(mol_re)
+regplot(mol_re, mod="AI",  xlab="Aridity index", ylab=expression("P sen of COV (% +10 mm)"),
+        xlim=c(0,0.42), predlim=c(0,0.42),shade="white",bg="blue", legend=F)
+#add the weight values
+data_metric$weight<- weights(mol_re)
+#add the log regression
+lm_re<-lm(data_metric$per_change~data_metric$AI)
+summary(lm_re)
+#add the confidence
+data_metric$pred_value<-predict(lm_re, newdata = data_metric, interval = "confidence")
+#run the plot
+p_cov<-
+  ggplot(data_metric, aes(x = AI, y = per_change)) +
+  geom_point(aes(size=weight),fill = "blue",color="black",shape=21) + # Scatterplot
+  stat_smooth(method = "lm", formula = y ~ x, color = "black",se=F) + # Log regression line
+  geom_line(aes(y = pred_value[,'lwr']), linetype = "dashed", color = "black") +  # Lower boundary
+  geom_line(aes(y = pred_value[,'upr']), linetype = "dashed", color = "black") +  # Upper boundary
+  scale_x_continuous(limits=c(0,0.4),breaks=seq(0,0.4,0.1)) +
+  scale_y_continuous(limits=c(-6,10),breaks=seq(-6,9,3))+
+  theme_linedraw()+
+  theme(
+    panel.background = element_rect(color="black",fill="white"), 
+    panel.grid = element_blank(),
+    axis.text.y = element_text(colour = "black",  size = 14),
+    axis.text.x = element_text(colour = "black",  size = 14),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.key=element_blank(),
+    legend.text = element_text(colour="black", size = 8),
+    legend.title = element_text(size=10),
+    legend.key.size = unit(0.5, 'cm'),
+    legend.background = element_blank(),
+    text = element_text(size = 8),
+    legend.position= "none",
+    axis.ticks.length.y = unit(.3, "cm"),
+    axis.ticks.length.x = unit(.3, "cm") )
+p_cov
+ggsave(plot=p_cov,filename = '.../fig3.c.tiff', ,compression='lzw',  width = 8,height = 8,dpi=400,units = "cm")
+
+
+#2for DEN
+data_metric<-sen.p[sen.p$metric=="DEN",]
+data_metric$yi<-log(data_metric$I_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$I_sd*data_metric$I_sd/(data_metric$I_n*data_metric$I_mean*data_metric$I_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+   #multiple 100 for percentage change
+    data_metric$per_change<-10*(exp(data_metric$yi)-1)*100/(data_metric$I_net)
+    #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+mol_re <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ AI,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+regplot(mol_re)
+regplot(mol_re, mod="AI",  xlab="Aridity index", ylab=expression("P sen of DEN (% +10 mm)"),
+        xlim=c(0,0.42), predlim=c(0,0.42),shade="white",bg="blue", legend=F)
+#add the weight values
+data_metric$weight<- weights(mol_re)
+#add the log regression
+lm_re<-lm(data_metric$per_change~log(data_metric$AI))
+summary(lm_re)
+#add the confidence
+data_metric$pred_value<-predict(lm_re, newdata = data_metric, interval = "confidence")
+#run the plot
+p_den<-
+  ggplot(data_metric, aes(x = AI, y = per_change)) +
+  geom_point(aes(size=weight),fill = "blue",color="black",shape=21) + # Scatterplot
+  stat_smooth(method = "lm", formula = y ~ log(x), color = "black",se=F) + # Log regression line
+  geom_line(aes(y = pred_value[,'lwr']), linetype = "dashed", color = "black") +  # Lower boundary
+  geom_line(aes(y = pred_value[,'upr']), linetype = "dashed", color = "black") +  # Upper boundary
+  scale_x_continuous(limits=c(0,0.45),breaks=seq(0,0.45,0.1)) +
+  scale_y_continuous(limits=c(-15,35),breaks=seq(-10,30,10))+
+  theme_linedraw()+
+  theme(
+    panel.background = element_rect(color="black",fill="white"), 
+    panel.grid = element_blank(),
+    axis.text.y = element_text(colour = "black",  size = 14),
+    axis.text.x = element_text(colour = "black",  size = 14),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.key=element_blank(),
+    legend.text = element_text(colour="black", size = 8),
+    legend.title = element_text(size=10),
+    legend.key.size = unit(0.5, 'cm'),
+    legend.background = element_blank(),
+    text = element_text(size = 8),
+    legend.position= "none",
+    axis.ticks.length.y = unit(.3, "cm"),
+    axis.ticks.length.x = unit(.3, "cm") )
+p_den
+ggsave(plot=p_den,filename = '.../fig3.d.tiff', ,compression='lzw',  width = 8,height = 8,dpi=400,units = "cm")
+
+
+#3for H
+data_metric<-sen.p[sen.p$metric=="H",]
+data_metric$yi<-log(data_metric$I_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$I_sd*data_metric$I_sd/(data_metric$I_n*data_metric$I_mean*data_metric$I_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+   #multiple 100 for percentage change
+    data_metric$per_change<-10*(exp(data_metric$yi)-1)*100/(data_metric$I_net)
+    #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+mol_re <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ AI,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+regplot(mol_re)
+regplot(mol_re, mod="AI",  xlab="Aridity index", ylab=expression("P sen of DEN (% +10 mm)"),
+        xlim=c(0,0.6), predlim=c(0,0.6),shade="white",bg="blue", legend=F, lty = 2)
+
+#add the weight values
+data_metric$weight<- weights(mol_re)
+#add the log regression
+lm_re<-lm(data_metric$per_change~data_metric$AI)
+summary(lm_re)
+#add the confidence
+data_metric$pred_value<-predict(lm_re, newdata = data_metric, interval = "confidence")
+#run the plot
+p_den<-
+  ggplot(data_metric, aes(x = AI, y = per_change)) +
+  geom_point(aes(size=weight),fill = "blue",color="black",shape=21) + # Scatterplot
+  stat_smooth(method = "lm", formula = y ~ x, color = "black",se=F,linetype = "dashed") + # Log regression line
+  geom_line(aes(y = pred_value[,'lwr']), linetype = "dashed", color = "black") +  # Lower boundary
+  geom_line(aes(y = pred_value[,'upr']), linetype = "dashed", color = "black") +  # Upper boundary
+  scale_x_continuous(limits=c(0,0.55),breaks=seq(0,0.5,0.1)) +
+  scale_y_continuous(limits=c(-4,4),breaks=seq(-4,4,2))+
+  theme_linedraw()+
+  theme(
+    panel.background = element_rect(color="black",fill="white"), 
+    panel.grid = element_blank(),
+    axis.text.y = element_text(colour = "black",  size = 14),
+    axis.text.x = element_text(colour = "black",  size = 14),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.key=element_blank(),
+    legend.text = element_text(colour="black", size = 8),
+    legend.title = element_text(size=10),
+    legend.key.size = unit(0.5, 'cm'),
+    legend.background = element_blank(),
+    text = element_text(size = 8),
+    legend.position= "none",
+    axis.ticks.length.y = unit(.3, "cm"),
+    axis.ticks.length.x = unit(.3, "cm") )
+p_den
+ggsave(plot=p_den,filename = '.../fig3.e.tiff', ,compression='lzw',  width = 8,height = 8,dpi=400,units = "cm")
+
+```
+
+
+
+##D
+```{r}
+AIC_COM<-
+       ldply(levels(sen.d$metric),function(j){
+   #j=levels(sen.d$metric)[1]
+    data_metric<-sen.d[sen.d$metric==j,] 
+    data_metric$yi<-log(data_metric$D_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$D_sd*data_metric$D_sd/(data_metric$D_n*data_metric$D_mean*data_metric$D_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+   #multiple 100 for percentage change
+    data_metric$per_change<-10*(exp(data_metric$yi)-1)*100/(data_metric$D_net)
+    #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+    model1 <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ AI,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+    model2 <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ MAT,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+    model3 <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ MAP,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+  # Obtain mean and standard deviation of the original predictor
+    p.data<-data.frame(metric= j,AI=AIC(model1),MAT=AIC(model2),MAP=AIC(model3),P_AI=model1$pval[2],P_MAT=model2$pval[2],P_MAP=model3$pval[2])
+       })
+#MAT is best for Cover and H
+
+
+#1for AGB
+data_metric<-sen.d[sen.d$metric=="AGB",]
+data_metric$yi<-log(data_metric$D_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$D_sd*data_metric$D_sd/(data_metric$D_n*data_metric$D_mean*data_metric$D_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+   #multiple 100 for percentage change
+    data_metric$per_change<-10*(exp(data_metric$yi)-1)*100/(data_metric$D_net)
+    #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+mol_re <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ AI,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+regplot(mol_re)
+regplot(mol_re, mod="AI",  xlab="Aridity index", ylab=expression("D sen of AGB (% -10 mm)"),
+        xlim=c(0,2.2), predlim=c(0,2.2),shade="white",bg="orange", legend=F)
+
+#add the weight values
+data_metric$weight<- weights(mol_re)
+#add the log regression
+lm_re<-lm(data_metric$per_change~log(data_metric$AI))
+#add the confidence
+data_metric$pred_value<-predict(lm_re, newdata = data_metric, interval = "confidence")
+#run the plot
+d_agb<-
+  ggplot(data_metric, aes(x = AI, y = per_change)) +
+  geom_point(aes(size=weight),fill = "orange",color="black",shape=21) + # Scatterplot
+  stat_smooth(method = "lm", formula = y ~ log(x), color = "black",se=F) + # Log regression line
+  geom_line(aes(y = pred_value[,'lwr']), linetype = "dashed", color = "black") +  # Lower boundary
+  geom_line(aes(y = pred_value[,'upr']), linetype = "dashed", color = "black") +  # Upper boundary
+  scale_x_continuous(limits=c(-0.05,2.5),breaks=seq(0,2.5,0.5)) +
+  scale_y_continuous(limits=c(-10,6),breaks=seq(-9,6,3))+
+  theme_linedraw()+
+  theme(
+    panel.background = element_rect(color="black",fill="white"), 
+    panel.grid = element_blank(),
+    axis.text.y = element_text(colour = "black",  size = 14),
+    axis.text.x = element_text(colour = "black",  size = 14),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.key=element_blank(),
+    legend.text = element_text(colour="black", size = 8),
+    legend.title = element_text(size=10),
+    legend.key.size = unit(0.5, 'cm'),
+    legend.background = element_blank(),
+    text = element_text(size = 8),
+    legend.position= "none",
+    axis.ticks.length.y = unit(.3, "cm"),
+    axis.ticks.length.x = unit(.3, "cm") )
+d_agb
+ggsave(plot=d_agb,filename = '.../fig3.f.tiff', ,compression='lzw',  width = 8,height = 8,dpi=400,units = "cm")
+
+
+#for ANPP
+data_metric<-sen.d[sen.d$metric=="ANPP",]
+data_metric$yi<-log(data_metric$D_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$D_sd*data_metric$D_sd/(data_metric$D_n*data_metric$D_mean*data_metric$D_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+   #multiple 100 for percentage change
+    data_metric$per_change<-10*(exp(data_metric$yi)-1)*100/(data_metric$D_net)
+    #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+mol_re <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ AI,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+regplot(mol_re)
+regplot(mol_re, mod="AI",  xlab="Aridity index", ylab=expression("D sen of ANPP (% -10 mm-1)"),
+        xlim=c(0,2.2), predlim=c(0,2.2),shade="white",bg="orange", legend=F)
+#add the weight values
+data_metric$weight<- weights(mol_re)
+#add the log regression
+lm_re<-lm(data_metric$per_change~log(data_metric$AI))
+summary(lm_re)
+#add the confidence
+data_metric$pred_value<-predict(lm_re, newdata = data_metric, interval = "confidence")
+#run the plot
+d_anpp<-
+  ggplot(data_metric, aes(x = AI, y = per_change)) +
+  geom_point(aes(size=weight),fill = "orange",color="black",shape=21) + # Scatterplot
+  stat_smooth(method = "lm", formula = y ~ log(x), color = "black",se=F) + # Log regression line
+  geom_line(aes(y = pred_value[,'lwr']), linetype = "dashed", color = "black") +  # Lower boundary
+  geom_line(aes(y = pred_value[,'upr']), linetype = "dashed", color = "black") +  # Upper boundary
+  scale_x_continuous(limits=c(-0.05,2.5),breaks=seq(0,2.5,0.5)) +
+  scale_y_continuous(limits=c(-10,6),breaks=seq(-9,6,3))+
+  theme_linedraw()+
+  theme(
+    panel.background = element_rect(color="black",fill="white"), 
+    panel.grid = element_blank(),
+    axis.text.y = element_text(colour = "black",  size = 14),
+    axis.text.x = element_text(colour = "black",  size = 14),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.key=element_blank(),
+    legend.text = element_text(colour="black", size = 8),
+    legend.title = element_text(size=10),
+    legend.key.size = unit(0.5, 'cm'),
+    legend.background = element_blank(),
+    text = element_text(size = 8),
+    legend.position= "none",
+    axis.ticks.length.y = unit(.3, "cm"),
+    axis.ticks.length.x = unit(.3, "cm") )
+d_anpp
+ggsave(plot=d_anpp,filename = '.../fig3.g.tiff', ,compression='lzw',  width = 8,height = 8,dpi=400,units = "cm")
+
+#FOR COVER
+data_metric<-sen.d[sen.d$metric=="COV",]
+data_metric$yi<-log(data_metric$D_mean/data_metric$C_mean)
+    data_metric$vi<-data_metric$D_sd*data_metric$D_sd/(data_metric$D_n*data_metric$D_mean*data_metric$D_mean)+
+                    data_metric$C_sd*data_metric$C_sd/(data_metric$C_n*data_metric$C_mean*data_metric$C_mean)
+   #multiple 100 for percentage change
+    data_metric$per_change<-10*(exp(data_metric$yi)-1)*100/(data_metric$D_net)
+    #for the H metric, we need to add control=list(stepadj=0.5, maxiter=1000), check the help to get the solution
+mol_re <- rma(yi=data_metric$per_change, vi=data_metric$vi, mods = ~ AI,,data = data_metric, control=list(stepadj=0.5, maxiter=1000))
+regplot(mol_re)
+regplot(mol_re, mod="AI",  xlab="Aridity index", ylab=expression("D sen of COV (% -10 mm-1)"),
+        xlim=c(0,2.2), predlim=c(0,2.2),shade="white",bg="orange", legend=F,lty=2)
+#add the weight values
+data_metric$weight<- weights(mol_re)
+#add the log regression
+lm_re<-lm(data_metric$per_change~log(data_metric$AI))
+summary(lm_re)
+#add the confidence
+data_metric$pred_value<-predict(lm_re, newdata = data_metric, interval = "confidence")
+#run the plot
+d_anpp<-
+  ggplot(data_metric, aes(x = AI, y = per_change)) +
+  geom_point(aes(size=weight),fill = "orange",color="black",shape=21) + # Scatterplot
+  stat_smooth(method = "lm", formula = y ~ log(x), color = "black",se=F) + # Log regression line
+  geom_line(aes(y = pred_value[,'lwr']), linetype = "dashed", color = "black") +  # Lower boundary
+  geom_line(aes(y = pred_value[,'upr']), linetype = "dashed", color = "black") +  # Upper boundary
+  scale_x_continuous(limits=c(-0.05,2.5),breaks=seq(0,2.5,0.5)) +
+  scale_y_continuous(limits=c(-19,8),breaks=seq(-18,6,6))+
+  theme_linedraw()+
+  theme(
+    panel.background = element_rect(color="black",fill="white"), 
+    panel.grid = element_blank(),
+    axis.text.y = element_text(colour = "black",  size = 14),
+    axis.text.x = element_text(colour = "black",  size = 14),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    legend.key=element_blank(),
+    legend.text = element_text(colour="black", size = 8),
+    legend.title = element_text(size=10),
+    legend.key.size = unit(0.5, 'cm'),
+    legend.background = element_blank(),
+    text = element_text(size = 8),
+    legend.position= "none",
+    axis.ticks.length.y = unit(.3, "cm"),
+    axis.ticks.length.x = unit(.3, "cm") )
+d_anpp
+ggsave(plot=d_anpp,filename = '.../fig3.h.tiff', ,compression='lzw',  width = 8,height = 8,dpi=400,units = "cm")
+
+```
